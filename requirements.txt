@@ -3,3 +3,5 @@ requests
 psycopg2-binary
 scrapetube
 clickhouse-driver
+lz4
+zstd
