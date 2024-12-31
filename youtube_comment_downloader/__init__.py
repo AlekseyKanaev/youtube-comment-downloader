@@ -1,10 +1,12 @@
 import argparse
-import io
 import json
-import os
 import sys
 import time
 import traceback
+import html
+import re
+import yaml
+import pika
 
 import clickhouse_driver.dbapi.cursor
 from clickhouse_driver import connect as ClickhouseConnect
@@ -15,6 +17,10 @@ from .downloader import YoutubeCommentDownloader, SORT_BY_POPULAR, SORT_BY_RECEN
 INDENT = 4
 
 comments_table = "comments2"
+timedRE = re.compile("\d?\d:\d\d(:\d\d)?")
+config_path = "comment_downloader_config.yml"
+comments_parsed_bytes_queue = "comments_parsed_bytes"
+commenters_queue = "commenters"
 
 
 def to_json(comment, indent=None):
@@ -28,28 +34,36 @@ def to_json(comment, indent=None):
 def insert_comments(comments, cur):
     execute_batch(cur, """
     INSERT INTO comments_partitioned
-        (id,video_youtube_id,commentator_youtube_id,text,votes_number,heart,reply,channel_id)
-    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+        (id,video_youtube_id,commentator_youtube_id,text,votes_number,heart,reply,channel_id,timed)
+    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
     ON CONFLICT (id) DO UPDATE
     SET text=EXCLUDED.text,
-        votes=EXCLUDED.votes,heart=EXCLUDED.heart,
+        votes=EXCLUDED.votes,heart=EXCLUDED.heart,timed=EXCLUDED.timed,
         reply=EXCLUDED.reply,channel_id=EXCLUDED.channel_id,
         parsed=NOW(),votes_number=EXCLUDED.votes_number
     """, comments, 1000)
 
 
 def insert_comments_clickhouse(comments, cur: clickhouse_driver.dbapi.cursor.Cursor):
-    query = 'INSERT INTO  comments_grn_1024_test (id,video_youtube_id,commenter_youtube_id,text,votes_number,heart,reply,channel_id) VALUES'
+    query = 'INSERT INTO  comments_grn_1024_test2 (id,video_youtube_id,commenter_youtube_id,text,votes_number,heart,reply,channel_id,timed) VALUES'
 
     cur.executemany(query, comments)
 
 
-def insert_commentators(commentators, cur):
+def insert_commentators(commentators, cur, rabbit_channel):
     commentators_list = []
     for k in commentators:
         commentators_list.append(commentators[k])
 
     # print(commentators_list)
+
+    msg = json.dumps(commentators)
+    rabbit_channel.basic_publish(exchange='',
+                                 routing_key=commenters_queue,
+                                 body=msg,
+                                 properties=pika.BasicProperties(
+                                     delivery_mode=pika.spec.PERSISTENT_DELIVERY_MODE
+                                 ))
 
     execute_batch(cur, """ 
     INSERT INTO commentators_partitioned
@@ -84,7 +98,6 @@ def main(argv=None):
                         help='Show this help message and exit')
     parser.add_argument('--youtubeid', '-y', help='ID of Youtube video for which to download the comments')
     parser.add_argument('--url', '-u', help='Youtube URL for which to download the comments')
-    parser.add_argument('--pretty', '-p', action='store_true', help='Change the output format to indented JSON')
     parser.add_argument('--limit', '-l', type=int, help='Limit the number of comments')
     parser.add_argument('--language', '-a', type=str, default=None,
                         help='Language for Youtube generated text (e.g. en)')
@@ -93,10 +106,12 @@ def main(argv=None):
     parser.add_argument('--channel_id', '-c', type=str,
                         help='channel id')
 
+    cfg = yaml.safe_load(open(config_path))
+
     while True:
         try:
-            conn = psycopg2.connect(dbname='ripper', user='admin',
-                                    password='sdf237toogawf982', host='46.17.102.41')
+            conn = psycopg2.connect(dbname=cfg["postgres"]["db"], user=cfg["postgres"]["user"],
+                                    password=cfg["postgres"]["pass"], host=cfg["postgres"]["host"])
             conn.autocommit = True
             cursor = conn.cursor()
 
@@ -107,12 +122,34 @@ def main(argv=None):
 
     while True:
         try:
-            clickhouse_conn = ClickhouseConnect("clickhouse://admin:cNHMUZFK@46.17.102.41:9000")
+            url_str = "clickhouse://{0}:{1}@{2}:{3}".format(
+                cfg["clickhouse"]["user"],
+                cfg["clickhouse"]["pass"],
+                cfg["clickhouse"]["host"],
+                cfg["clickhouse"]["port"]
+            )
+            clickhouse_conn = ClickhouseConnect(url_str)
             clickhouseCursor = clickhouse_conn.cursor()
 
             break
         except Exception as e:
             print('Error:', str(e))
+            time.sleep(120)
+
+    while True:
+        try:
+            rabbit_connection = pika.BlockingConnection(
+                pika.ConnectionParameters(
+                    # heartbeat=600,
+                    # blocked_connection_timeout=300,
+                    host=cfg["rabbit"]["host"],
+                    port=cfg["rabbit"]["port"],
+                    credentials=pika.PlainCredentials(cfg["rabbit"]["user"],
+                                                      cfg["rabbit"]["pass"])))
+            rabbit_channel = rabbit_connection.channel()
+            break
+        except Exception as exp:
+            print('Error:', str(exp))
             time.sleep(120)
 
     try:
@@ -121,15 +158,12 @@ def main(argv=None):
         youtube_id = args.youtubeid
         youtube_url = args.url
         limit = args.limit
-        pretty = args.pretty
         channel_id = args.channel_id
 
-        if (not youtube_id and not youtube_url):
+        if not youtube_id and not youtube_url:
             parser.print_usage()
             raise ValueError('you need to specify a Youtube ID/URL')
 
-
-        print('Downloading Youtube comments for', youtube_id or youtube_url)
         downloader = YoutubeCommentDownloader()
         generator = (
             downloader.get_comments(youtube_id, args.sort, args.language)
@@ -138,71 +172,52 @@ def main(argv=None):
         )
 
         count = 1
-        start_time = time.time()
+        # start_time = time.time()
 
-
-                # this approach is used to return an id on conflict, otherwise nothing is returned
-        cursor.execute("""
-                INSERT INTO videos
-                    (youtube_id)
-                    VALUES (%s)
-                    ON CONFLICT (youtube_id)
-                    DO NOTHING;
-                         """, (
-            args.youtubeid,
-        ))
-        # cursor.execute("SELECT id FROM videos WHERE youtube_video_id=%s;", (
-        #     args.youtubeid,
-        # ))  # todo: can be removed because videos insert is done golang
-        # video_id = cursor.fetchone()[0]
-        # fetch = cursor.fetchone()
         video_id = args.youtubeid
-        # if fetch is None:
-        #     print("@@@@@@@@@@@@@@@@@@@@@@@@")
-        #     print(args.youtubeid)
-        #     print("@@@@@@@@@@@@@@@@@@@@@@@@")
-        #     # conn.commit()
 
         comments_batch = []
         commentators_batch = {}
-        # commentators_batch = []
         commentators_batch_size = 1000
         comments_batch_size = 20000
         comment = next(generator, None)
+        bytes_sum = 0
         while comment:
             # comment_str = to_json(comment, indent=INDENT if pretty else None)
             comment = None if limit and count >= limit else next(generator,
                                                                  None)  # Note that this is the next comment
-            # comment_str = comment_str + ',' if pretty and comment is not None else comment_str
-            # print(comment_str.decode('utf-8') if isinstance(comment_str, bytes) else comment_str, file=fp)
-            sys.stdout.write('Downloaded %d comment(s)\r' % count)
-            sys.stdout.flush()
+            # sys.stdout.write('Downloaded %d comment(s)\r' % count)
+            # sys.stdout.flush()
 
             if comment is not None:
                 count += 1
+                bytes_sum += len(comment["text"].encode('utf-8'))
 
                 if len(commentators_batch) < commentators_batch_size:
                     commentators_batch[comment["channel"]] = (
-                    # commentators_batch.append((
                         comment["channel"],
                         comment["author"],
                         comment["photo"],
                     )
-                    # ))
                 else:
-                    insert_commentators(commentators_batch, cursor)
-                    # commentators_batch = []
+                    insert_commentators(commentators_batch, cursor, rabbit_channel)
                     commentators_batch = {}
                 if len(comments_batch) < comments_batch_size:
+                    timed_res = timedRE.match(comment["text"])
+                    timed = False
+                    if timed_res:
+                        timed = True
+
                     comments_batch.append((
                         comment["cid"],
                         video_id,
                         comment["channel"],
-                        comment["text"],
+                        html.unescape(comment["text"]),
                         parse_votes(comment["votes"]),
                         comment["heart"],
                         comment["reply"],
                         channel_id,
+                        timed,
                     ))
                 else:
                     insert_comments_clickhouse(comments_batch, clickhouseCursor)
@@ -211,12 +226,23 @@ def main(argv=None):
         if len(comments_batch) > 0:
             insert_comments_clickhouse(comments_batch, clickhouseCursor)
         if len(commentators_batch) > 0:
-            insert_commentators(commentators_batch, cursor)
+            insert_commentators(commentators_batch, cursor, rabbit_channel)
 
-        print('\n[{:.2f} seconds] Done!'.format(time.time() - start_time))
+        msg = json.dumps({'bytes_sum': bytes_sum})
+        rabbit_channel.basic_publish(exchange='',
+                                     routing_key=comments_parsed_bytes_queue,
+                                     body=msg)
+
+        # print('\n[{:.2f} seconds] Done!'.format(time.time() - start_time))
 
         cursor.close()
         conn.close()
+
+        rabbit_channel.close()
+        rabbit_connection.close()
+
+        clickhouseCursor.close()
+        clickhouse_conn.close()
     except Exception as e:
         print(traceback.format_exc())
         print('Error:', str(e))
