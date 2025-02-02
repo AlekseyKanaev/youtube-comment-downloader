@@ -7,6 +7,7 @@ import html
 import re
 import yaml
 import pika
+from kafka import KafkaProducer
 
 import clickhouse_driver.dbapi.cursor
 from clickhouse_driver import connect as ClickhouseConnect
@@ -50,20 +51,22 @@ def insert_comments_clickhouse(comments, cur: clickhouse_driver.dbapi.cursor.Cur
     cur.executemany(query, comments)
 
 
-def insert_commentators(commentators, cur, rabbit_channel):
-    commentators_list = []
-    for k in commentators:
-        commentators_list.append(commentators[k])
-
-    # print(commentators_list)
-
-    msg = json.dumps(commentators)
+def enqueue_commenters(commenters, rabbit_channel):
+    msg = json.dumps(commenters)
     rabbit_channel.basic_publish(exchange='',
                                  routing_key=commenters_queue,
                                  body=msg,
                                  properties=pika.BasicProperties(
                                      delivery_mode=pika.spec.PERSISTENT_DELIVERY_MODE
                                  ))
+
+
+def insert_commentators(commentators, cur):
+    commentators_list = []
+    for k in commentators:
+        commentators_list.append(commentators[k])
+
+    # print(commentators_list)
 
     execute_batch(cur, """ 
     INSERT INTO commentators_partitioned
@@ -117,7 +120,17 @@ def main(argv=None):
 
             break
         except Exception as e:
-            print('Error:', str(e))
+            print('python_error:', str(e))
+            time.sleep(120)
+
+    while True:
+        try:
+            kafka_p = KafkaProducer(bootstrap_servers=cfg["kafka"]["brokers"],
+                                    sasl_plain_username=cfg["kafka"]["user"], sasl_plain_password=cfg["kafka"]["pass"])
+
+            break
+        except Exception as e:
+            print('python_error:', str(e))
             time.sleep(120)
 
     while True:
@@ -133,15 +146,15 @@ def main(argv=None):
 
             break
         except Exception as e:
-            print('Error:', str(e))
+            print('python_error:', str(e))
             time.sleep(120)
 
     while True:
         try:
             rabbit_connection = pika.BlockingConnection(
                 pika.ConnectionParameters(
-                    # heartbeat=600,
-                    # blocked_connection_timeout=300,
+                    heartbeat=600,
+                    blocked_connection_timeout=300,
                     host=cfg["rabbit"]["host"],
                     port=cfg["rabbit"]["port"],
                     credentials=pika.PlainCredentials(cfg["rabbit"]["user"],
@@ -149,10 +162,14 @@ def main(argv=None):
             rabbit_channel = rabbit_connection.channel()
             break
         except Exception as exp:
-            print('Error:', str(exp))
+            print('python_error:', str(exp))
             time.sleep(120)
 
     try:
+        for _ in range(100):
+            kafka_p.send('foobar', b'some_message_bytes')
+
+
         args = parser.parse_args() if argv is None else parser.parse_args(argv)
 
         youtube_id = args.youtubeid
@@ -177,7 +194,8 @@ def main(argv=None):
         video_id = args.youtubeid
 
         comments_batch = []
-        commentators_batch = {}
+        # commentators_batch = {}
+        commentators_batch_enqueue = {}
         commentators_batch_size = 1000
         comments_batch_size = 20000
         comment = next(generator, None)
@@ -193,15 +211,22 @@ def main(argv=None):
                 count += 1
                 bytes_sum += len(comment["text"].encode('utf-8'))
 
-                if len(commentators_batch) < commentators_batch_size:
-                    commentators_batch[comment["channel"]] = (
-                        comment["channel"],
-                        comment["author"],
-                        comment["photo"],
-                    )
+                if len(commentators_batch_enqueue) < commentators_batch_size:
+                    # commentators_batch[comment["channel"]] = (
+                    #     comment["channel"],
+                    #     comment["author"],
+                    #     comment["photo"],
+                    # )
+                    commentators_batch_enqueue[comment["channel"]] = {
+                        "commenter_id": comment["channel"],
+                        "name_id": comment["author"],
+                        "photo_url": comment["photo"],
+                    }
                 else:
-                    insert_commentators(commentators_batch, cursor, rabbit_channel)
-                    commentators_batch = {}
+                    # insert_commentators(commentators_batch, cursor)
+                    enqueue_commenters(commentators_batch_enqueue, rabbit_channel)
+                    # commentators_batch = {}
+                    commentators_batch_enqueue = {}
                 if len(comments_batch) < comments_batch_size:
                     timed_res = timedRE.match(comment["text"])
                     timed = False
@@ -225,8 +250,11 @@ def main(argv=None):
 
         if len(comments_batch) > 0:
             insert_comments_clickhouse(comments_batch, clickhouseCursor)
-        if len(commentators_batch) > 0:
-            insert_commentators(commentators_batch, cursor, rabbit_channel)
+        # if len(commentators_batch) > 0:
+            # insert_commentators(commentators_batch, cursor)
+            # enqueue_commenters(commentators_batch_enqueue, rabbit_channel)
+        if len(commentators_batch_enqueue) > 0:
+            enqueue_commenters(commentators_batch_enqueue, rabbit_channel)
 
         msg = json.dumps({'bytes_sum': bytes_sum})
         rabbit_channel.basic_publish(exchange='',
@@ -245,5 +273,5 @@ def main(argv=None):
         clickhouse_conn.close()
     except Exception as e:
         print(traceback.format_exc())
-        print('Error:', str(e))
+        print('python_error:', str(e))
         sys.exit(1)
