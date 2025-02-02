@@ -22,6 +22,7 @@ timedRE = re.compile("\d?\d:\d\d(:\d\d)?")
 config_path = "comment_downloader_config.yml"
 comments_parsed_bytes_queue = "comments_parsed_bytes"
 commenters_queue = "commenters"
+commenters_topic = "commenters"
 
 
 def to_json(comment, indent=None):
@@ -60,20 +61,23 @@ def enqueue_commenters(commenters, rabbit_channel):
                                      delivery_mode=pika.spec.PERSISTENT_DELIVERY_MODE
                                  ))
 
+def kafka_send_commenters(commenters, producer):
+    msg = json.dumps(commenters).encode('utf-8')
+    producer.send(commenters_topic, msg)
 
-def insert_commentators(commentators, cur):
-    commentators_list = []
-    for k in commentators:
-        commentators_list.append(commentators[k])
-
-    # print(commentators_list)
-
-    execute_batch(cur, """ 
-    INSERT INTO commentators_partitioned
-        (youtube_id,name_id,name,avatar_url)
-    VALUES (%s,%s,'',%s)
-    ON CONFLICT (youtube_id) DO NOTHING
-    """, commentators_list, 1000)
+# def insert_commentators(commentators, cur):
+#     commentators_list = []
+#     for k in commentators:
+#         commentators_list.append(commentators[k])
+#
+#     # print(commentators_list)
+#
+#     execute_batch(cur, """
+#     INSERT INTO commentators_partitioned
+#         (youtube_id,name_id,name,avatar_url)
+#     VALUES (%s,%s,'',%s)
+#     ON CONFLICT (youtube_id) DO NOTHING
+#     """, commentators_list, 1000)
 
 
 def parse_votes(votes):
@@ -113,24 +117,15 @@ def main(argv=None):
 
     while True:
         try:
-            conn = psycopg2.connect(dbname=cfg["postgres"]["db"], user=cfg["postgres"]["user"],
-                                    password=cfg["postgres"]["pass"], host=cfg["postgres"]["host"])
-            conn.autocommit = True
-            cursor = conn.cursor()
-
-            break
-        except Exception as e:
-            print('python_error:', str(e))
-            time.sleep(120)
-
-    while True:
-        try:
             kafka_p = KafkaProducer(bootstrap_servers=cfg["kafka"]["brokers"],
-                                    sasl_plain_username=cfg["kafka"]["user"], sasl_plain_password=cfg["kafka"]["pass"])
+                                    sasl_plain_username=cfg["kafka"]["user"],
+                                    sasl_plain_password=cfg["kafka"]["pass"],
+                                    security_protocol="SASL_PLAINTEXT",
+                                    sasl_mechanism="PLAIN")
 
             break
         except Exception as e:
-            print('python_error:', str(e))
+            print('kafka_connect_error:', str(e))
             time.sleep(120)
 
     while True:
@@ -146,7 +141,7 @@ def main(argv=None):
 
             break
         except Exception as e:
-            print('python_error:', str(e))
+            print('clickhouse_connect_error:', str(e))
             time.sleep(120)
 
     while True:
@@ -162,14 +157,10 @@ def main(argv=None):
             rabbit_channel = rabbit_connection.channel()
             break
         except Exception as exp:
-            print('python_error:', str(exp))
+            print('rabbit_connect_error:', str(exp))
             time.sleep(120)
 
     try:
-        for _ in range(100):
-            kafka_p.send('foobar', b'some_message_bytes')
-
-
         args = parser.parse_args() if argv is None else parser.parse_args(argv)
 
         youtube_id = args.youtubeid
@@ -223,9 +214,8 @@ def main(argv=None):
                         "photo_url": comment["photo"],
                     }
                 else:
-                    # insert_commentators(commentators_batch, cursor)
                     enqueue_commenters(commentators_batch_enqueue, rabbit_channel)
-                    # commentators_batch = {}
+                    kafka_send_commenters(commentators_batch_enqueue, kafka_p)
                     commentators_batch_enqueue = {}
                 if len(comments_batch) < comments_batch_size:
                     timed_res = timedRE.match(comment["text"])
@@ -255,6 +245,7 @@ def main(argv=None):
             # enqueue_commenters(commentators_batch_enqueue, rabbit_channel)
         if len(commentators_batch_enqueue) > 0:
             enqueue_commenters(commentators_batch_enqueue, rabbit_channel)
+            kafka_send_commenters(commentators_batch_enqueue, kafka_p)
 
         msg = json.dumps({'bytes_sum': bytes_sum})
         rabbit_channel.basic_publish(exchange='',
@@ -262,9 +253,6 @@ def main(argv=None):
                                      body=msg)
 
         # print('\n[{:.2f} seconds] Done!'.format(time.time() - start_time))
-
-        cursor.close()
-        conn.close()
 
         rabbit_channel.close()
         rabbit_connection.close()
