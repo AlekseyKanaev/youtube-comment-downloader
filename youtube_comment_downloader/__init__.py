@@ -7,12 +7,11 @@ import html
 import re
 import yaml
 import pika
-from kafka import KafkaProducer
+# from kafka import KafkaProducer
+from polyglot.detect import Detector
 
-import clickhouse_driver.dbapi.cursor
-from clickhouse_driver import connect as ClickhouseConnect
-import psycopg2
-from psycopg2.extras import execute_batch
+# import clickhouse_driver.dbapi.cursor
+# from clickhouse_driver import connect as ClickhouseConnect
 from .downloader import YoutubeCommentDownloader, SORT_BY_POPULAR, SORT_BY_RECENT
 
 INDENT = 4
@@ -22,6 +21,7 @@ timedRE = re.compile("\d?\d:\d\d(:\d\d)?")
 config_path = "comment_downloader_config.yml"
 comments_parsed_bytes_queue = "comments_parsed_bytes"
 commenters_queue = "commenters"
+comments_queue = "comments"
 commenters_topic = "commenters"
 
 
@@ -33,51 +33,32 @@ def to_json(comment, indent=None):
     return ''.join(padding + line for line in comment_str.splitlines(True))
 
 
-def insert_comments(comments, cur):
-    execute_batch(cur, """
-    INSERT INTO comments_partitioned
-        (id,video_youtube_id,commentator_youtube_id,text,votes_number,heart,reply,channel_id,timed)
-    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-    ON CONFLICT (id) DO UPDATE
-    SET text=EXCLUDED.text,
-        votes=EXCLUDED.votes,heart=EXCLUDED.heart,timed=EXCLUDED.timed,
-        reply=EXCLUDED.reply,channel_id=EXCLUDED.channel_id,
-        parsed=NOW(),votes_number=EXCLUDED.votes_number
-    """, comments, 1000)
+# def insert_comments_clickhouse(comments, cur: clickhouse_driver.dbapi.cursor.Cursor):
+#     query = 'INSERT INTO  comments_grn_1024_test2 (id,video_youtube_id,commenter_youtube_id,text,votes_number,heart,reply,channel_id,timed,lang) VALUES'
+#
+#     cur.executemany(query, comments)
 
 
-def insert_comments_clickhouse(comments, cur: clickhouse_driver.dbapi.cursor.Cursor):
-    query = 'INSERT INTO  comments_grn_1024_test2 (id,video_youtube_id,commenter_youtube_id,text,votes_number,heart,reply,channel_id,timed) VALUES'
-
-    cur.executemany(query, comments)
+def enqueue_comments(comments, rabbit_channel):
+    msg = json.dumps(comments)
+    rabbit_channel.basic_publish(exchange='',
+                                 routing_key=comments_queue,
+                                 body=msg)
 
 
 def enqueue_commenters(commenters, rabbit_channel):
     msg = json.dumps(commenters)
     rabbit_channel.basic_publish(exchange='',
                                  routing_key=commenters_queue,
-                                 body=msg,
-                                 properties=pika.BasicProperties(
-                                     delivery_mode=pika.spec.PERSISTENT_DELIVERY_MODE
-                                 ))
+                                 body=msg)
+    # properties=pika.BasicProperties(
+    #     delivery_mode=pika.spec.PERSISTENT_DELIVERY_MODE
+    # ))
+
 
 def kafka_send_commenters(commenters, producer):
     msg = json.dumps(commenters).encode('utf-8')
     producer.send(commenters_topic, msg)
-
-# def insert_commentators(commentators, cur):
-#     commentators_list = []
-#     for k in commentators:
-#         commentators_list.append(commentators[k])
-#
-#     # print(commentators_list)
-#
-#     execute_batch(cur, """
-#     INSERT INTO commentators_partitioned
-#         (youtube_id,name_id,name,avatar_url)
-#     VALUES (%s,%s,'',%s)
-#     ON CONFLICT (youtube_id) DO NOTHING
-#     """, commentators_list, 1000)
 
 
 def parse_votes(votes):
@@ -98,6 +79,21 @@ def parse_votes(votes):
     return out
 
 
+def get_lang_code(text: str) -> str:
+    try:
+        languages = Detector(text).languages
+        if len(languages) > 0:
+            return languages[0].code
+
+    except Exception as e:
+        # print('short_comment_error:', str(e))
+        # print(text)
+
+        return ""
+
+    return ""
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(add_help=False,
                                      description=('Download Youtube comments without using the Youtube API'))
@@ -112,37 +108,39 @@ def main(argv=None):
                         help='Whether to download popular (0) or recent comments (1). Defaults to 1')
     parser.add_argument('--channel_id', '-c', type=str,
                         help='channel id')
+    parser.add_argument('--host', '-t', type=str,
+                        help='host ip')
 
     cfg = yaml.safe_load(open(config_path))
 
     while True:
         try:
-            kafka_p = KafkaProducer(bootstrap_servers=cfg["kafka"]["brokers"],
-                                    sasl_plain_username=cfg["kafka"]["user"],
-                                    sasl_plain_password=cfg["kafka"]["pass"],
-                                    security_protocol="SASL_PLAINTEXT",
-                                    sasl_mechanism="PLAIN")
+            # kafka_p = KafkaProducer(bootstrap_servers=cfg["kafka"]["brokers"],
+            #                         sasl_plain_username=cfg["kafka"]["user"],
+            #                         sasl_plain_password=cfg["kafka"]["pass"],
+            #                         security_protocol="SASL_PLAINTEXT",
+            #                         sasl_mechanism="PLAIN")
 
             break
         except Exception as e:
             print('kafka_connect_error:', str(e))
             time.sleep(120)
 
-    while True:
-        try:
-            url_str = "clickhouse://{0}:{1}@{2}:{3}".format(
-                cfg["clickhouse"]["user"],
-                cfg["clickhouse"]["pass"],
-                cfg["clickhouse"]["host"],
-                cfg["clickhouse"]["port"]
-            )
-            clickhouse_conn = ClickhouseConnect(url_str)
-            clickhouseCursor = clickhouse_conn.cursor()
-
-            break
-        except Exception as e:
-            print('clickhouse_connect_error:', str(e))
-            time.sleep(120)
+    # while True:
+    #     try:
+    #         url_str = "clickhouse://{0}:{1}@{2}:{3}".format(
+    #             cfg["clickhouse"]["user"],
+    #             cfg["clickhouse"]["pass"],
+    #             cfg["clickhouse"]["host"],
+    #             cfg["clickhouse"]["port"]
+    #         )
+    #         clickhouse_conn = ClickhouseConnect(url_str)
+    #         clickhouseCursor = clickhouse_conn.cursor()
+    #
+    #         break
+    #     except Exception as e:
+    #         print('clickhouse_connect_error:', str(e))
+    #         time.sleep(120)
 
     while True:
         try:
@@ -167,6 +165,7 @@ def main(argv=None):
         youtube_url = args.url
         limit = args.limit
         channel_id = args.channel_id
+        host = args.host
 
         if not youtube_id and not youtube_url:
             parser.print_usage()
@@ -202,52 +201,61 @@ def main(argv=None):
                 count += 1
                 bytes_sum += len(comment["text"].encode('utf-8'))
 
-                if len(commentators_batch_enqueue) < commentators_batch_size:
-                    # commentators_batch[comment["channel"]] = (
-                    #     comment["channel"],
-                    #     comment["author"],
-                    #     comment["photo"],
-                    # )
-                    commentators_batch_enqueue[comment["channel"]] = {
-                        "commenter_id": comment["channel"],
-                        "name_id": comment["author"],
-                        "photo_url": comment["photo"],
-                    }
-                else:
+                commentators_batch_enqueue[comment["channel"]] = {
+                    "commenter_id": comment["channel"],
+                    "name_id": comment["author"],
+                    "photo_url": comment["photo"],
+                }
+                if len(commentators_batch_enqueue) == commentators_batch_size:
                     enqueue_commenters(commentators_batch_enqueue, rabbit_channel)
-                    kafka_send_commenters(commentators_batch_enqueue, kafka_p)
+                    # kafka_send_commenters(commentators_batch_enqueue, kafka_p)
+                    del commentators_batch_enqueue
                     commentators_batch_enqueue = {}
-                if len(comments_batch) < comments_batch_size:
-                    timed_res = timedRE.match(comment["text"])
-                    timed = False
-                    if timed_res:
-                        timed = True
 
-                    comments_batch.append((
-                        comment["cid"],
-                        video_id,
-                        comment["channel"],
-                        html.unescape(comment["text"]),
-                        parse_votes(comment["votes"]),
-                        comment["heart"],
-                        comment["reply"],
-                        channel_id,
-                        timed,
-                    ))
-                else:
-                    insert_comments_clickhouse(comments_batch, clickhouseCursor)
+                timed_res = timedRE.match(comment["text"])
+                timed = False
+                if timed_res:
+                    timed = True
+
+                unescp_text = html.unescape(comment["text"])
+                # comments_batch.append((
+                #     comment["cid"],
+                #     video_id,
+                #     comment["channel"],
+                #     unescp_text,
+                #     parse_votes(comment["votes"]),
+                #     comment["heart"],
+                #     comment["reply"],
+                #     channel_id,
+                #     timed,
+                #     get_lang_code(unescp_text)
+                # ))
+                comments_batch.append({
+                    "id": comment["cid"],
+                    "video_id": video_id,
+                    "commenter_id": comment["channel"],
+                    "text": unescp_text,
+                    "votes": parse_votes(comment["votes"]),
+                    "hearted": comment["heart"],
+                    "reply": comment["reply"],
+                    "channel_id": channel_id,
+                    "timed": timed,
+                    "lang": get_lang_code(unescp_text)
+                })
+                if len(comments_batch) == comments_batch_size:
+                    enqueue_comments(comments_batch, rabbit_channel)
+                    # insert_comments_clickhouse(comments_batch, clickhouseCursor)
+                    del comments_batch
                     comments_batch = []
 
         if len(comments_batch) > 0:
-            insert_comments_clickhouse(comments_batch, clickhouseCursor)
-        # if len(commentators_batch) > 0:
-            # insert_commentators(commentators_batch, cursor)
-            # enqueue_commenters(commentators_batch_enqueue, rabbit_channel)
+            # insert_comments_clickhouse(comments_batch, clickhouseCursor)
+            enqueue_comments(comments_batch, rabbit_channel)
         if len(commentators_batch_enqueue) > 0:
             enqueue_commenters(commentators_batch_enqueue, rabbit_channel)
-            kafka_send_commenters(commentators_batch_enqueue, kafka_p)
+            # kafka_send_commenters(commentators_batch_enqueue, kafka_p)
 
-        msg = json.dumps({'bytes_sum': bytes_sum})
+        msg = json.dumps({'bytes_sum': bytes_sum, 'host': host})
         rabbit_channel.basic_publish(exchange='',
                                      routing_key=comments_parsed_bytes_queue,
                                      body=msg)
@@ -257,8 +265,8 @@ def main(argv=None):
         rabbit_channel.close()
         rabbit_connection.close()
 
-        clickhouseCursor.close()
-        clickhouse_conn.close()
+        # clickhouseCursor.close()
+        # clickhouse_conn.close()
     except Exception as e:
         print(traceback.format_exc())
         print('python_error:', str(e))
