@@ -60,3 +60,8 @@ youtube_comment_downloader/comment_downloader_config.yml
 
 # emacs
 *~
+/.idea/misc.xml
+/.idea/modules.xml
+/.idea/inspectionProfiles/profiles_settings.xml
+/.idea/vcs.xml
+/.idea/youtube-comment-downloader.iml

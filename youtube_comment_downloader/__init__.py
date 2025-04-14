@@ -44,6 +44,7 @@ def enqueue_comments(comments, rabbit_channel):
     rabbit_channel.basic_publish(exchange='',
                                  routing_key=comments_queue,
                                  body=msg)
+    del msg
 
 
 def enqueue_commenters(commenters, rabbit_channel):
@@ -54,11 +55,13 @@ def enqueue_commenters(commenters, rabbit_channel):
     # properties=pika.BasicProperties(
     #     delivery_mode=pika.spec.PERSISTENT_DELIVERY_MODE
     # ))
+    del msg
 
 
 def kafka_send_commenters(commenters, producer):
     msg = json.dumps(commenters).encode('utf-8')
     producer.send(commenters_topic, msg)
+    del msg
 
 
 def parse_votes(votes):
