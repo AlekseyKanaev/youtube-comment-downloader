@@ -56,7 +56,7 @@ docs/_build/
 # PyBuilder
 target/
 
-youtube_comment_downloader/comment_downloader_config.yml
+comment_downloader_config.yml
 
 # emacs
 *~

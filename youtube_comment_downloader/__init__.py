@@ -1,4 +1,3 @@
-import argparse
 import json
 import sys
 import time
@@ -22,6 +21,9 @@ config_path = "comment_downloader_config.yml"
 comments_parsed_bytes_queue = "comments_parsed_bytes"
 commenters_queue = "commenters"
 comments_queue = "comments"
+video_crawler_jobs_queue = "videos_crawler_jobs"
+video_parsed_queue = "video_parsed"
+
 commenters_topic = "commenters"
 
 
@@ -97,25 +99,24 @@ def get_lang_code(text: str) -> str:
     return ""
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(add_help=False,
-                                     description=('Download Youtube comments without using the Youtube API'))
-    parser.add_argument('--help', '-h', action='help', default=argparse.SUPPRESS,
-                        help='Show this help message and exit')
-    parser.add_argument('--youtubeid', '-y', help='ID of Youtube video for which to download the comments')
-    parser.add_argument('--url', '-u', help='Youtube URL for which to download the comments')
-    parser.add_argument('--limit', '-l', type=int, help='Limit the number of comments')
-    parser.add_argument('--language', '-a', type=str, default=None,
-                        help='Language for Youtube generated text (e.g. en)')
-    parser.add_argument('--sort', '-s', type=int, default=SORT_BY_RECENT,
-                        help='Whether to download popular (0) or recent comments (1). Defaults to 1')
-    parser.add_argument('--channel_id', '-c', type=str,
-                        help='channel id')
-    parser.add_argument('--host', '-t', type=str,
-                        help='host ip')
+def get_rabbit_connection(cfg: dict) -> pika.BlockingConnection:
+    while True:
+        try:
+            rabbit_connection = pika.BlockingConnection(
+                pika.ConnectionParameters(
+                    heartbeat=600,
+                    blocked_connection_timeout=300,
+                    host=cfg["rabbit"]["host"],
+                    port=cfg["rabbit"]["port"],
+                    credentials=pika.PlainCredentials(cfg["rabbit"]["user"],
+                                                      cfg["rabbit"]["pass"])))
+            return rabbit_connection
+        except Exception as exp:
+            print('rabbit_connect_error:', str(exp))
+            time.sleep(120)
 
-    cfg = yaml.safe_load(open(config_path))
 
+def get_kafka_connection(cfg: dict):
     while True:
         try:
             # kafka_p = KafkaProducer(bootstrap_servers=cfg["kafka"]["brokers"],
@@ -129,148 +130,129 @@ def main(argv=None):
             print('kafka_connect_error:', str(e))
             time.sleep(120)
 
-    # while True:
-    #     try:
-    #         url_str = "clickhouse://{0}:{1}@{2}:{3}".format(
-    #             cfg["clickhouse"]["user"],
-    #             cfg["clickhouse"]["pass"],
-    #             cfg["clickhouse"]["host"],
-    #             cfg["clickhouse"]["port"]
-    #         )
-    #         clickhouse_conn = ClickhouseConnect(url_str)
-    #         clickhouseCursor = clickhouse_conn.cursor()
-    #
-    #         break
-    #     except Exception as e:
-    #         print('clickhouse_connect_error:', str(e))
-    #         time.sleep(120)
 
-    while True:
+def download_comments(video_id: str, channel_id: str, sort: str, language: str, host: str, rabbit_channel):
+    downloader = YoutubeCommentDownloader()
+    generator = downloader.get_comments(video_id, sort, language)
+
+    count = 1
+
+
+    comments_batch = []
+    commentators_batch_enqueue = {}
+    commentators_batch_size = 1000
+    comments_batch_size = 20000
+    comment = next(generator, None)
+    bytes_sum = 0
+    while comment:
+        # comment_str = to_json(comment, indent=INDENT if pretty else None)
+        comment = next(generator, None)  # Note that this is the next comment
+        # sys.stdout.write('Downloaded %d comment(s)\r' % count)
+        # sys.stdout.flush()
+
+        if comment is not None:
+            count += 1
+            bytes_sum += len(comment["text"].encode('utf-8'))
+
+            commentators_batch_enqueue[comment["channel"]] = {
+                "commenter_id": comment["channel"],
+                "name_id": comment["author"],
+                "photo_url": comment["photo"],
+            }
+            if len(commentators_batch_enqueue) == commentators_batch_size:
+                enqueue_commenters(commentators_batch_enqueue, rabbit_channel)
+                del commentators_batch_enqueue
+                commentators_batch_enqueue = {}
+
+            timed_res = timedRE.match(comment["text"])
+            timed = False
+            if timed_res:
+                timed = True
+
+            unescp_text = html.unescape(comment["text"])
+            comments_batch.append({
+                "id": comment["cid"],
+                "video_id": video_id,
+                "commenter_id": comment["channel"],
+                "text": unescp_text,
+                "votes": parse_votes(comment["votes"]),
+                "hearted": comment["heart"],
+                "reply": comment["reply"],
+                "channel_id": channel_id,
+                "timed": timed,
+                "lang": get_lang_code(unescp_text)
+            })
+            if len(comments_batch) == comments_batch_size:
+                enqueue_comments(comments_batch, rabbit_channel)
+                del comments_batch
+                comments_batch = []
+
+    if len(comments_batch) > 0:
+        enqueue_comments(comments_batch, rabbit_channel)
+    if len(commentators_batch_enqueue) > 0:
+        enqueue_commenters(commentators_batch_enqueue, rabbit_channel)
+
+    msg = json.dumps({'bytes_sum': bytes_sum, 'host': host})
+    rabbit_channel.basic_publish(exchange='',
+                                 routing_key=comments_parsed_bytes_queue,
+                                 body=msg.encode())
+
+    rabbit_channel.basic_publish(exchange='',
+                                 routing_key=video_parsed_queue,
+                                 body=video_id)
+
+
+def msg_handler_closure(host):
+    def msg_handler(ch, method, properties, body):
         try:
-            rabbit_connection = pika.BlockingConnection(
-                pika.ConnectionParameters(
-                    heartbeat=600,
-                    blocked_connection_timeout=300,
-                    host=cfg["rabbit"]["host"],
-                    port=cfg["rabbit"]["port"],
-                    credentials=pika.PlainCredentials(cfg["rabbit"]["user"],
-                                                      cfg["rabbit"]["pass"])))
-            rabbit_channel = rabbit_connection.channel()
-            break
-        except Exception as exp:
-            print('rabbit_connect_error:', str(exp))
-            time.sleep(120)
+            video_parse = json.loads(body.decode('utf-8'))
 
-    try:
-        args = parser.parse_args() if argv is None else parser.parse_args(argv)
+            eprint(video_parse)
 
-        youtube_id = args.youtubeid
-        youtube_url = args.url
-        limit = args.limit
-        channel_id = args.channel_id
-        host = args.host
 
-        if not youtube_id and not youtube_url:
-            parser.print_usage()
-            raise ValueError('you need to specify a Youtube ID/URL')
+            # youtube_id = args.youtubeid
+            # channel_id = args.channel_id
+            # host = args.host
 
-        downloader = YoutubeCommentDownloader()
-        generator = (
-            downloader.get_comments(youtube_id, args.sort, args.language)
-            if youtube_id
-            else downloader.get_comments_from_url(youtube_url, args.sort, args.language)
-        )
+            download_comments(video_parse['video_id'],
+                              video_parse['channel_id'],
+                              video_parse['sort'],
+                              video_parse['lang'],
+                              host,
+                              ch
+                              )
 
-        count = 1
-        # start_time = time.time()
+            ch.basic_publish(exchange='',
+                             routing_key=video_parsed_queue,
+                             body=video_parse['youtube_id'])
+        except Exception as e:
+            # todo: log
+            print(traceback.format_exc())
+            print('python_error:', str(e))
 
-        video_id = args.youtubeid
+            ch.basic_publish(exchange='',
+                             routing_key=video_crawler_jobs_queue,
+                             body=body)
 
-        comments_batch = []
-        # commentators_batch = {}
-        commentators_batch_enqueue = {}
-        commentators_batch_size = 1000
-        comments_batch_size = 20000
-        comment = next(generator, None)
-        bytes_sum = 0
-        while comment:
-            # comment_str = to_json(comment, indent=INDENT if pretty else None)
-            comment = None if limit and count >= limit else next(generator,
-                                                                 None)  # Note that this is the next comment
-            # sys.stdout.write('Downloaded %d comment(s)\r' % count)
-            # sys.stdout.flush()
+    return msg_handler
 
-            if comment is not None:
-                count += 1
-                bytes_sum += len(comment["text"].encode('utf-8'))
 
-                commentators_batch_enqueue[comment["channel"]] = {
-                    "commenter_id": comment["channel"],
-                    "name_id": comment["author"],
-                    "photo_url": comment["photo"],
-                }
-                if len(commentators_batch_enqueue) == commentators_batch_size:
-                    enqueue_commenters(commentators_batch_enqueue, rabbit_channel)
-                    # kafka_send_commenters(commentators_batch_enqueue, kafka_p)
-                    del commentators_batch_enqueue
-                    commentators_batch_enqueue = {}
+def eprint(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
 
-                timed_res = timedRE.match(comment["text"])
-                timed = False
-                if timed_res:
-                    timed = True
 
-                unescp_text = html.unescape(comment["text"])
-                # comments_batch.append((
-                #     comment["cid"],
-                #     video_id,
-                #     comment["channel"],
-                #     unescp_text,
-                #     parse_votes(comment["votes"]),
-                #     comment["heart"],
-                #     comment["reply"],
-                #     channel_id,
-                #     timed,
-                #     get_lang_code(unescp_text)
-                # ))
-                comments_batch.append({
-                    "id": comment["cid"],
-                    "video_id": video_id,
-                    "commenter_id": comment["channel"],
-                    "text": unescp_text,
-                    "votes": parse_votes(comment["votes"]),
-                    "hearted": comment["heart"],
-                    "reply": comment["reply"],
-                    "channel_id": channel_id,
-                    "timed": timed,
-                    "lang": get_lang_code(unescp_text)
-                })
-                if len(comments_batch) == comments_batch_size:
-                    enqueue_comments(comments_batch, rabbit_channel)
-                    # insert_comments_clickhouse(comments_batch, clickhouseCursor)
-                    del comments_batch
-                    comments_batch = []
+def main(argv=None):
+    cfg = yaml.safe_load(open(config_path))
 
-        if len(comments_batch) > 0:
-            # insert_comments_clickhouse(comments_batch, clickhouseCursor)
-            enqueue_comments(comments_batch, rabbit_channel)
-        if len(commentators_batch_enqueue) > 0:
-            enqueue_commenters(commentators_batch_enqueue, rabbit_channel)
-            # kafka_send_commenters(commentators_batch_enqueue, kafka_p)
+    rabbit_connection = get_rabbit_connection(cfg)
+    rabbit_channel = rabbit_connection.channel()
 
-        msg = json.dumps({'bytes_sum': bytes_sum, 'host': host})
-        rabbit_channel.basic_publish(exchange='',
-                                     routing_key=comments_parsed_bytes_queue,
-                                     body=msg)
+    rabbit_channel.basic_consume(queue=video_crawler_jobs_queue, on_message_callback=msg_handler_closure(cfg['host']),
+                                 auto_ack=False)
 
-        # print('\n[{:.2f} seconds] Done!'.format(time.time() - start_time))
+    eprint(' [*] Waiting for messages. To exit press CTRL+C')
+    rabbit_channel.start_consuming()
 
-        rabbit_channel.close()
-        rabbit_connection.close()
+    rabbit_channel.close()
+    rabbit_connection.close()
 
-        # clickhouseCursor.close()
-        # clickhouse_conn.close()
-    except Exception as e:
-        print(traceback.format_exc())
-        print('python_error:', str(e))
-        sys.exit(1)
