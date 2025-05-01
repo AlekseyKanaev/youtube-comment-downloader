@@ -287,11 +287,13 @@ def main(argv=None):
 
     app_instance = os.getenv(ENV_APP_INSTANCE)
 
-    for method_frame, properties, body in rabbit_channel.consume(video_crawler_jobs_queue, auto_ack=True):
+    for method_frame, properties, body in rabbit_channel.consume(video_crawler_jobs_queue):
         # Display the message parts
         # print(method_frame)
         # print(properties)
         # print(body)
+        rabbit_channel.basic_ack(method_frame.delivery_tag)
+
         parse_video(rabbit_channel, app_instance, body)
 
     # rabbit_channel.basic_consume(queue=video_crawler_jobs_queue,
