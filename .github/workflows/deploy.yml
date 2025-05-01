@@ -33,3 +33,23 @@ jobs:
         push: true
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
+
+    - name: Upload the manifest to the server (${{ vars.HOST_IP_FIRSTVDS }})
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ vars.HOST_IP_FIRSTVDS }}
+        username: ${{ secrets.SSH_USER_FIRSTVDS }}
+        password: ${{ secrets.SSH_PASS_FIRSTVDS }}
+        source: ./manifests/
+        target: /home/admin/youtube-grabber
+
+    - name: Make kubernetes deploy
+      uses: appleboy/ssh-action@v1.2.2
+      with:
+        host: ${{ vars.HOST_IP_FIRSTVDS }}
+        username: ${{ secrets.SSH_USER_FIRSTVDS }}
+        password: ${{ secrets.SSH_PASS_FIRSTVDS }} # todo: hide paths in variables
+        script: |
+                cd youtube-grabber
+                sudo microk8s kubectl apply -f ./manifests/
+                rm -r ./manifests    
