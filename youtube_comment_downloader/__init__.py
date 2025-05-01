@@ -284,6 +284,7 @@ def main(argv=None):
 
     rabbit_connection = get_rabbit_connection()
     rabbit_channel = rabbit_connection.channel()
+    rabbit_channel.basic_qos(prefetch_count=1)
 
     app_instance = os.getenv(ENV_APP_INSTANCE)
 
