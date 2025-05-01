@@ -172,6 +172,9 @@ def download_comments(video_id: str, channel_id: str, sort: str, language: str, 
                 timed = True
 
             unescp_text = html.unescape(comment["text"])
+
+            eprint(unescp_text)
+
             comments_batch.append({
                 "id": comment["cid"],
                 "video_id": video_id,
@@ -259,7 +262,7 @@ def parse_video(chan, host, body):
 
         chan.basic_publish(exchange='',
                            routing_key=video_parsed_queue,
-                           body=video_parse['youtube_id'])
+                           body=video_parse['video_id'])
     except Exception as e:
         # todo: log
         print(traceback.format_exc())
