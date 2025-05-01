@@ -1,23 +1,19 @@
 import json
+import os
 import sys
 import time
 import traceback
 import html
 import re
-import yaml
 import pika
-# from kafka import KafkaProducer
 from polyglot.detect import Detector
 
-# import clickhouse_driver.dbapi.cursor
-# from clickhouse_driver import connect as ClickhouseConnect
 from .downloader import YoutubeCommentDownloader, SORT_BY_POPULAR, SORT_BY_RECENT
 
 INDENT = 4
 
 comments_table = "comments2"
 timedRE = re.compile("\d?\d:\d\d(:\d\d)?")
-config_path = "comment_downloader_config.yml"
 comments_parsed_bytes_queue = "comments_parsed_bytes"
 commenters_queue = "commenters"
 comments_queue = "comments"
@@ -25,6 +21,13 @@ video_crawler_jobs_queue = "videos_crawler_jobs"
 video_parsed_queue = "video_parsed"
 
 commenters_topic = "commenters"
+
+ENV_RABBIT_USER = "RABBIT_USER"
+ENV_RABBIT_PASS = "RABBIT_PASSWORD"
+ENV_RABBIT_HOST = "RABBIT_HOST"
+ENV_RABBIT_PORT = "RABBIT_PORT"
+
+ENV_APP_INSTANCE = "APP_INSTANCE"
 
 
 def to_json(comment, indent=None):
@@ -99,17 +102,17 @@ def get_lang_code(text: str) -> str:
     return ""
 
 
-def get_rabbit_connection(cfg: dict) -> pika.BlockingConnection:
+def get_rabbit_connection() -> pika.BlockingConnection:
     while True:
         try:
             rabbit_connection = pika.BlockingConnection(
                 pika.ConnectionParameters(
                     heartbeat=600,
                     blocked_connection_timeout=300,
-                    host=cfg["rabbit"]["host"],
-                    port=cfg["rabbit"]["port"],
-                    credentials=pika.PlainCredentials(cfg["rabbit"]["user"],
-                                                      cfg["rabbit"]["pass"])))
+                    host=os.getenv(ENV_RABBIT_HOST),
+                    port=int(os.getenv(ENV_RABBIT_PORT)),
+                    credentials=pika.PlainCredentials(os.getenv(ENV_RABBIT_USER),
+                                                      os.getenv(ENV_RABBIT_PASS))))
             return rabbit_connection
         except Exception as exp:
             print('rabbit_connect_error:', str(exp))
@@ -136,7 +139,6 @@ def download_comments(video_id: str, channel_id: str, sort: str, language: str, 
     generator = downloader.get_comments(video_id, sort, language)
 
     count = 1
-
 
     comments_batch = []
     commentators_batch_enqueue = {}
@@ -209,7 +211,6 @@ def msg_handler_closure(host):
 
             eprint(video_parse)
 
-
             # youtube_id = args.youtubeid
             # channel_id = args.channel_id
             # host = args.host
@@ -242,12 +243,13 @@ def eprint(*args, **kwargs):
 
 
 def main(argv=None):
-    cfg = yaml.safe_load(open(config_path))
+    # cfg = yaml.safe_load(open(config_path))
 
-    rabbit_connection = get_rabbit_connection(cfg)
+    rabbit_connection = get_rabbit_connection()
     rabbit_channel = rabbit_connection.channel()
 
-    rabbit_channel.basic_consume(queue=video_crawler_jobs_queue, on_message_callback=msg_handler_closure(cfg['host']),
+    rabbit_channel.basic_consume(queue=video_crawler_jobs_queue,
+                                 on_message_callback=msg_handler_closure(os.getenv(ENV_APP_INSTANCE)),
                                  auto_ack=False)
 
     eprint(' [*] Waiting for messages. To exit press CTRL+C')
@@ -255,4 +257,3 @@ def main(argv=None):
 
     rabbit_channel.close()
     rabbit_connection.close()
-

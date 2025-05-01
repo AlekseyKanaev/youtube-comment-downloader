@@ -2,11 +2,9 @@ dateparser
 requests~=2.32.3
 psycopg2-binary
 scrapetube
-clickhouse-driver~=0.2.9
 lz4
 pyyaml
 pika~=1.3.2
-kafka-python
 polyglot
 PyICU
 pycld2
