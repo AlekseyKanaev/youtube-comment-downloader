@@ -45,6 +45,8 @@ def to_json(comment, indent=None):
 
 
 def enqueue_comments(comments, rabbit_channel):
+    eprint(len(comments))
+
     msg = json.dumps(comments)
     rabbit_channel.basic_publish(exchange='',
                                  routing_key=comments_queue,
@@ -173,7 +175,7 @@ def download_comments(video_id: str, channel_id: str, sort: str, language: str, 
 
             unescp_text = html.unescape(comment["text"])
 
-            eprint(unescp_text)
+            # eprint(unescp_text)
 
             comments_batch.append({
                 "id": comment["cid"],

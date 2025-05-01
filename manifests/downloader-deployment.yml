@@ -17,7 +17,7 @@ spec:
         app: python-downloader
     spec:
       containers:
-      - image: registry.commentsripper.com/library/downloader:v0.0.8
+      - image: registry.commentsripper.com/library/downloader:v0.0.9
         name: python-downloader
         envFrom:
         - configMapRef:
