@@ -247,6 +247,7 @@ def parse_video(chan, host, body):
         # youtube_id = args.youtubeid
         # channel_id = args.channel_id
         # host = args.host
+        print("parsing video... ", video_parse['video_id'])
 
         download_comments(video_parse['video_id'],
                           video_parse['channel_id'],
@@ -257,16 +258,16 @@ def parse_video(chan, host, body):
                           )
 
         chan.basic_publish(exchange='',
-                         routing_key=video_parsed_queue,
-                         body=video_parse['youtube_id'])
+                           routing_key=video_parsed_queue,
+                           body=video_parse['youtube_id'])
     except Exception as e:
         # todo: log
         print(traceback.format_exc())
         print('python_error:', str(e))
 
         chan.basic_publish(exchange='',
-                         routing_key=video_crawler_jobs_queue,
-                         body=body)
+                           routing_key=video_crawler_jobs_queue,
+                           body=body)
 
 
 def eprint(*args, **kwargs):
