@@ -238,6 +238,37 @@ def msg_handler_closure(host):
     return msg_handler
 
 
+def parse_video(chan, host, body):
+    try:
+        video_parse = json.loads(body.decode('utf-8'))
+
+        eprint(video_parse)
+
+        # youtube_id = args.youtubeid
+        # channel_id = args.channel_id
+        # host = args.host
+
+        download_comments(video_parse['video_id'],
+                          video_parse['channel_id'],
+                          video_parse['sort'],
+                          video_parse['lang'],
+                          host,
+                          chan
+                          )
+
+        chan.basic_publish(exchange='',
+                         routing_key=video_parsed_queue,
+                         body=video_parse['youtube_id'])
+    except Exception as e:
+        # todo: log
+        print(traceback.format_exc())
+        print('python_error:', str(e))
+
+        chan.basic_publish(exchange='',
+                         routing_key=video_crawler_jobs_queue,
+                         body=body)
+
+
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
 
@@ -248,12 +279,21 @@ def main(argv=None):
     rabbit_connection = get_rabbit_connection()
     rabbit_channel = rabbit_connection.channel()
 
-    rabbit_channel.basic_consume(queue=video_crawler_jobs_queue,
-                                 on_message_callback=msg_handler_closure(os.getenv(ENV_APP_INSTANCE)),
-                                 auto_ack=True)
+    app_instance = os.getenv(ENV_APP_INSTANCE)
 
-    eprint(' [*] Waiting for messages. To exit press CTRL+C')
-    rabbit_channel.start_consuming()
+    for method_frame, properties, body in rabbit_channel.consume(video_crawler_jobs_queue, auto_ack=True):
+        # Display the message parts
+        # print(method_frame)
+        # print(properties)
+        # print(body)
+        parse_video(rabbit_channel, app_instance, body)
+
+    # rabbit_channel.basic_consume(queue=video_crawler_jobs_queue,
+    #                              on_message_callback=msg_handler_closure(os.getenv(ENV_APP_INSTANCE)),
+    #                              auto_ack=True)
+    #
+    # eprint(' [*] Waiting for messages. To exit press CTRL+C')
+    # rabbit_channel.start_consuming()
 
     rabbit_channel.close()
     rabbit_connection.close()
