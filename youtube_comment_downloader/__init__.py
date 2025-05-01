@@ -13,7 +13,7 @@ from .downloader import YoutubeCommentDownloader, SORT_BY_POPULAR, SORT_BY_RECEN
 INDENT = 4
 
 comments_table = "comments2"
-timedRE = re.compile("\d?\d:\d\d(:\d\d)?")
+timedRE = re.compile(r'\d?\d:\d\d(:\d\d)?')
 comments_parsed_bytes_queue = "comments_parsed_bytes"
 commenters_queue = "commenters"
 comments_queue = "comments"
