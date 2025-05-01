@@ -247,7 +247,7 @@ def parse_video(chan, host, body):
         # youtube_id = args.youtubeid
         # channel_id = args.channel_id
         # host = args.host
-        print("parsing video... ", video_parse['video_id'])
+        eprint("parsing video... ", video_parse['video_id'])
 
         download_comments(video_parse['video_id'],
                           video_parse['channel_id'],
