@@ -136,7 +136,7 @@ def get_kafka_connection(cfg: dict):
 
 def download_comments(video_id: str, channel_id: str, sort: str, language: str, host: str, rabbit_channel):
     downloader = YoutubeCommentDownloader()
-    generator = downloader.get_comments(video_id, sort, language)
+    generator = downloader.get_comments(video_id)
 
     count = 1
 
