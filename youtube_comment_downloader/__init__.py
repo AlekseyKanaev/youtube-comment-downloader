@@ -45,8 +45,6 @@ def to_json(comment, indent=None):
 
 
 def enqueue_comments(comments, rabbit_channel):
-    eprint(len(comments))
-
     msg = json.dumps(comments)
     rabbit_channel.basic_publish(exchange='',
                                  routing_key=comments_queue,
@@ -174,9 +172,6 @@ def download_comments(video_id: str, channel_id: str, sort: str, language: str, 
                 timed = True
 
             unescp_text = html.unescape(comment["text"])
-
-            # eprint(unescp_text)
-
             comments_batch.append({
                 "id": comment["cid"],
                 "video_id": video_id,
@@ -216,10 +211,6 @@ def msg_handler_closure(host):
 
             eprint(video_parse)
 
-            # youtube_id = args.youtubeid
-            # channel_id = args.channel_id
-            # host = args.host
-
             download_comments(video_parse['video_id'],
                               video_parse['channel_id'],
                               video_parse['sort'],
@@ -247,11 +238,6 @@ def parse_video(chan, host, body):
     try:
         video_parse = json.loads(body.decode('utf-8'))
 
-        eprint(video_parse)
-
-        # youtube_id = args.youtubeid
-        # channel_id = args.channel_id
-        # host = args.host
         eprint("parsing video... ", video_parse['video_id'])
 
         download_comments(video_parse['video_id'],
@@ -289,20 +275,10 @@ def main(argv=None):
     app_instance = os.getenv(ENV_APP_INSTANCE)
 
     for method_frame, properties, body in rabbit_channel.consume(video_crawler_jobs_queue):
-        # Display the message parts
-        # print(method_frame)
-        # print(properties)
-        # print(body)
         rabbit_channel.basic_ack(method_frame.delivery_tag)
 
         parse_video(rabbit_channel, app_instance, body)
 
-    # rabbit_channel.basic_consume(queue=video_crawler_jobs_queue,
-    #                              on_message_callback=msg_handler_closure(os.getenv(ENV_APP_INSTANCE)),
-    #                              auto_ack=True)
-    #
-    # eprint(' [*] Waiting for messages. To exit press CTRL+C')
-    # rabbit_channel.start_consuming()
 
     rabbit_channel.close()
     rabbit_connection.close()
