@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: python-downloader
+  name: python-downloader
+  namespace: ripper
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: python-downloader
+  strategy: {}
+  template:
+    metadata:
+      labels:
+        app: python-downloader
+    spec:
+      containers:
+      - image: registry.commentsripper.com/library/downloader:v0.0.3
+        name: python-downloader
+        envFrom:
+        - configMapRef:
+            name: ripper-creds
+        - secretRef:
+            name: ripper-secret
+        - secretRef:
+            name: ripper-tls-secret
+            optional: true    
+        resources: {}
+      imagePullSecrets:
+      - name: regcred  
+status: {}
