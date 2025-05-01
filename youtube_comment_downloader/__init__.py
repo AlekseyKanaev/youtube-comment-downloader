@@ -250,7 +250,7 @@ def main(argv=None):
 
     rabbit_channel.basic_consume(queue=video_crawler_jobs_queue,
                                  on_message_callback=msg_handler_closure(os.getenv(ENV_APP_INSTANCE)),
-                                 auto_ack=False)
+                                 auto_ack=True)
 
     eprint(' [*] Waiting for messages. To exit press CTRL+C')
     rabbit_channel.start_consuming()
