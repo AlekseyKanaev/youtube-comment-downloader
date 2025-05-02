@@ -6,7 +6,7 @@ metadata:
   name: python-downloader
   namespace: ripper
 spec:
-  replicas: 1
+  replicas: 0
   selector:
     matchLabels:
       app: python-downloader
