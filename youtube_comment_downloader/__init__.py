@@ -115,7 +115,7 @@ def get_rabbit_connection() -> pika.BlockingConnection:
                                                       os.getenv(ENV_RABBIT_PASS))))
             return rabbit_connection
         except Exception as exp:
-            print('rabbit_connect_error:', str(exp))
+            eprint('rabbit_connect_error:', str(exp))
             time.sleep(120)
 
 
@@ -253,8 +253,8 @@ def parse_video(chan, host, body):
                            body=video_parse['video_id'])
     except Exception as e:
         # todo: log
-        print(traceback.format_exc())
-        print('python_error:', str(e))
+        eprint(traceback.format_exc())
+        eprint('python_error:', str(e))
 
         chan.basic_publish(exchange='',
                            routing_key=video_crawler_jobs_queue,
@@ -278,7 +278,6 @@ def main(argv=None):
         rabbit_channel.basic_ack(method_frame.delivery_tag)
 
         parse_video(rabbit_channel, app_instance, body)
-
 
     rabbit_channel.close()
     rabbit_connection.close()

@@ -6,7 +6,7 @@ metadata:
   name: python-downloader
   namespace: ripper
 spec:
-  replicas: 0
+  replicas: 20
   selector:
     matchLabels:
       app: python-downloader
@@ -17,7 +17,7 @@ spec:
         app: python-downloader
     spec:
       containers:
-      - image: registry.commentsripper.com/library/downloader:v0.0.12
+      - image: registry.commentsripper.com/library/downloader:v0.0.13
         name: python-downloader
         envFrom:
         - configMapRef:
