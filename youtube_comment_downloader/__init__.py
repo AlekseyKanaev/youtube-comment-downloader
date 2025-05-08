@@ -70,6 +70,8 @@ def kafka_send_commenters(commenters, producer):
 
 
 def parse_votes(votes):
+    eprint(votes)
+
     multiply = False
     if votes[-1] == "K":
         votes = votes[:-1]
@@ -130,7 +132,7 @@ def get_kafka_connection(cfg: dict):
 
             break
         except Exception as e:
-            print('kafka_connect_error:', str(e))
+            eprint('kafka_connect_error:', str(e))
             time.sleep(120)
 
 
