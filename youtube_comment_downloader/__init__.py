@@ -71,13 +71,13 @@ def kafka_send_commenters(commenters, producer):
 
 
 def parse_votes(votes):
-    dt = datetime.now()
-
-    # getting the timestamp
-    ts = datetime.timestamp(dt)
-
-    eprint(str(votes), ts)
-    print(votes)
+    # dt = datetime.now()
+    #
+    # # getting the timestamp
+    # ts = datetime.timestamp(dt)
+    #
+    # eprint(str(votes), ts)
+    # print(votes)
 
     multiply = False
     if votes[-1] == "K":

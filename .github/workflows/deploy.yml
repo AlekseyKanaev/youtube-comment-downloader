@@ -51,5 +51,5 @@ jobs:
         password: ${{ secrets.SSH_PASS_FIRSTVDS }} # todo: hide paths in variables
         script: |
                 cd youtube-grabber
-                sudo microk8s kubectl apply -f ./manifests/
+                sudo kubectl apply -f ./manifests/
                 rm -r ./manifests    
