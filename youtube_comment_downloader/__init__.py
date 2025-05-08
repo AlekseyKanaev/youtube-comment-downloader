@@ -8,7 +8,7 @@ import re
 import pika
 from polyglot.detect import Detector
 
-from .downloader import YoutubeCommentDownloader, SORT_BY_POPULAR, SORT_BY_RECENT
+from .downloader import YoutubeCommentDownloader, SORT_BY_POPULAR, SORT_BY_RECENT, YOUTUBE_VIDEO_URL
 
 INDENT = 4
 
@@ -136,7 +136,9 @@ def get_kafka_connection(cfg: dict):
 
 def download_comments(video_id: str, channel_id: str, sort: str, language: str, host: str, rabbit_channel):
     downloader = YoutubeCommentDownloader()
-    generator = downloader.get_comments(video_id)
+    # generator = downloader.get_comments(video_id)
+    generator = downloader.get_comments_from_url(YOUTUBE_VIDEO_URL.format(youtube_id=video_id),
+                                                 language="en")
 
     count = 1
 
