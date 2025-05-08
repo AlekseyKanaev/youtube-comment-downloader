@@ -6,6 +6,7 @@ import traceback
 import html
 import re
 import pika
+from datetime import datetime
 from polyglot.detect import Detector
 
 from .downloader import YoutubeCommentDownloader, SORT_BY_POPULAR, SORT_BY_RECENT, YOUTUBE_VIDEO_URL
@@ -70,7 +71,13 @@ def kafka_send_commenters(commenters, producer):
 
 
 def parse_votes(votes):
-    eprint(str(votes))
+    dt = datetime.now()
+
+    # getting the timestamp
+    ts = datetime.timestamp(dt)
+
+    eprint(str(votes), ts)
+    print(votes)
 
     multiply = False
     if votes[-1] == "K":
