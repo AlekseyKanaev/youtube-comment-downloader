@@ -70,7 +70,7 @@ def kafka_send_commenters(commenters, producer):
 
 
 def parse_votes(votes):
-    eprint(votes)
+    eprint(str(votes))
 
     multiply = False
     if votes[-1] == "K":
