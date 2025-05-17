@@ -40,7 +40,7 @@ jobs:
         host: ${{ vars.HOST_IP_FIRSTVDS }}
         username: ${{ secrets.SSH_USER_FIRSTVDS }}
         password: ${{ secrets.SSH_PASS_FIRSTVDS }}
-        source: ./manifests/
+        source: ./manifests/downloader-deployment.yml
         target: /home/admin/youtube-grabber
 
     - name: Make kubernetes deploy
@@ -52,4 +52,4 @@ jobs:
         script: |
                 cd youtube-grabber
                 sudo kubectl apply -f ./manifests/
-                rm -r ./manifests    
+                rm -r ./manifests 
