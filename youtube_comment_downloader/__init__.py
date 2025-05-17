@@ -6,7 +6,6 @@ import traceback
 import html
 import re
 import pika
-from datetime import datetime
 from polyglot.detect import Detector
 
 from .downloader import YoutubeCommentDownloader, SORT_BY_POPULAR, SORT_BY_RECENT, YOUTUBE_VIDEO_URL
@@ -15,7 +14,8 @@ INDENT = 4
 
 comments_table = "comments2"
 timedRE = re.compile(r'\d?\d:\d\d(:\d\d)?')
-comments_parsed_bytes_queue = "comments_parsed_bytes"
+comments_parsed_bytes_metrics_queue = "comments_parsed_bytes_metrics"
+comments_parsed_metrics_queue = "comments_parsed_metrics"
 commenters_queue = "commenters"
 comments_queue = "comments"
 video_crawler_jobs_queue = "videos_crawler_jobs"
@@ -149,14 +149,13 @@ def download_comments(video_id: str, channel_id: str, sort: str, language: str, 
     generator = downloader.get_comments_from_url(YOUTUBE_VIDEO_URL.format(youtube_id=video_id),
                                                  language="en")
 
-    count = 1
-
     comments_batch = []
     commentators_batch_enqueue = {}
     commentators_batch_size = 1000
     comments_batch_size = 20000
     comment = next(generator, None)
     bytes_sum = 0
+    comments_sum = 1
     while comment:
         # comment_str = to_json(comment, indent=INDENT if pretty else None)
         comment = next(generator, None)  # Note that this is the next comment
@@ -164,7 +163,7 @@ def download_comments(video_id: str, channel_id: str, sort: str, language: str, 
         # sys.stdout.flush()
 
         if comment is not None:
-            count += 1
+            comments_sum += 1
             bytes_sum += len(comment["text"].encode('utf-8'))
 
             commentators_batch_enqueue[comment["channel"]] = {
@@ -207,8 +206,13 @@ def download_comments(video_id: str, channel_id: str, sort: str, language: str, 
 
     msg = json.dumps({'bytes_sum': bytes_sum, 'host': host})
     rabbit_channel.basic_publish(exchange='',
-                                 routing_key=comments_parsed_bytes_queue,
+                                 routing_key=comments_parsed_bytes_metrics_queue,
                                  body=msg.encode())
+
+    msg2 = json.dumps({'comments_sum': comments_sum, 'host': host})
+    rabbit_channel.basic_publish(exchange='',
+                                 routing_key=comments_parsed_metrics_queue,
+                                 body=msg2.encode())
 
     rabbit_channel.basic_publish(exchange='',
                                  routing_key=video_parsed_queue,
