@@ -151,8 +151,8 @@ def download_comments(video_id: str, channel_id: str, sort: str, language: str, 
 
     comments_batch = []
     commentators_batch_enqueue = {}
-    commentators_batch_size = 1000
-    comments_batch_size = 20000
+    commentators_batch_size = 100
+    comments_batch_size = 100
     comment = next(generator, None)
     bytes_sum = 0
     comments_sum = 1
