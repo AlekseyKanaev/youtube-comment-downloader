@@ -19,7 +19,7 @@ comments_parsed_metrics_queue = "comments_parsed_metrics"
 commenters_queue = "commenters"
 comments_queue = "comments"
 video_crawler_jobs_queue = "videos_crawler_jobs"
-video_parsed_queue = "video_parsed"
+video_crawler_jobs_done_queue = "videos_crawler_jobs_done"
 
 commenters_topic = "commenters"
 
@@ -215,7 +215,7 @@ def download_comments(video_id: str, channel_id: str, sort: str, language: str, 
                                  body=msg2.encode())
 
     rabbit_channel.basic_publish(exchange='',
-                                 routing_key=video_parsed_queue,
+                                 routing_key=video_crawler_jobs_done_queue,
                                  body=video_id)
 
 
@@ -234,9 +234,9 @@ def msg_handler_closure(host):
                               ch
                               )
 
-            ch.basic_publish(exchange='',
-                             routing_key=video_parsed_queue,
-                             body=video_parse['youtube_id'])
+            # ch.basic_publish(exchange='',
+            #                  routing_key=video_parsed_queue,
+            #                  body=video_parse['youtube_id'])
         except Exception as e:
             # todo: log
             print(traceback.format_exc())
@@ -263,9 +263,9 @@ def parse_video(chan, host, body):
                           chan
                           )
 
-        chan.basic_publish(exchange='',
-                           routing_key=video_parsed_queue,
-                           body=video_parse['video_id'])
+        # chan.basic_publish(exchange='',
+        #                    routing_key=video_parsed_queue,
+        #                    body=video_parse['video_id'])
     except Exception as e:
         # todo: log
         eprint(traceback.format_exc())
