@@ -20,6 +20,7 @@ commenters_queue = "commenters"
 comments_queue = "comments"
 video_crawler_jobs_queue = "videos_crawler_jobs"
 video_crawler_jobs_done_queue = "videos_crawler_jobs_done"
+sponsors_queue = "sponsors"
 
 commenters_topic = "commenters"
 
@@ -172,7 +173,10 @@ def download_comments(video_id: str, channel_id: str, sort: str, language: str, 
                 "photo_url": comment["photo"],
             }
             if comment["paid"]:
-                commenter["paid"] = True
+                msg = json.dumps({'commenter_id': comment["channel"], 'channel_id': channel_id})
+                rabbit_channel.basic_publish(exchange='',
+                                             routing_key=sponsors_queue,
+                                             body=msg.encode())
 
             commentators_batch_enqueue[comment["channel"]] = commenter
 
