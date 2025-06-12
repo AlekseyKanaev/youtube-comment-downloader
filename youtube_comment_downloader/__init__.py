@@ -172,7 +172,7 @@ def download_comments(video_id: str, channel_id: str, sort: str, language: str, 
                 "name_id": comment["author"],
                 "photo_url": comment["photo"],
             }
-            if comment["paid"]:
+            if "paid" in comment:
                 msg = json.dumps({'commenter_id': comment["channel"], 'channel_id': channel_id})
                 rabbit_channel.basic_publish(exchange='',
                                              routing_key=sponsors_queue,
