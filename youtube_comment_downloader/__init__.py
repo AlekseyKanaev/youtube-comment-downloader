@@ -166,11 +166,16 @@ def download_comments(video_id: str, channel_id: str, sort: str, language: str, 
             comments_sum += 1
             bytes_sum += len(comment["text"].encode('utf-8'))
 
-            commentators_batch_enqueue[comment["channel"]] = {
+            commenter = {
                 "commenter_id": comment["channel"],
                 "name_id": comment["author"],
                 "photo_url": comment["photo"],
             }
+            if comment["paid"]:
+                commenter["paid"] = True
+
+            commentators_batch_enqueue[comment["channel"]] = commenter
+
             if len(commentators_batch_enqueue) == commentators_batch_size:
                 enqueue_commenters(commentators_batch_enqueue, rabbit_channel)
                 del commentators_batch_enqueue
