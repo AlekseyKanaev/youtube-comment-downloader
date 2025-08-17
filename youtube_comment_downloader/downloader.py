@@ -15,6 +15,8 @@ USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 SORT_BY_POPULAR = 0
 SORT_BY_RECENT = 1
 
+resp_code_queue = "resp_code"
+
 YT_CFG_RE = r'ytcfg\.set\s*\(\s*({.+?})\s*\)\s*;'
 YT_INITIAL_DATA_RE = r'(?:window\s*\[\s*["\']ytInitialData["\']\s*\]|ytInitialData)\s*=\s*({.+?})\s*;\s*(?:var\s+meta|</script|\n)'
 YT_HIDDEN_INPUT_RE = r'<input\s+type="hidden"\s+name="([A-Za-z0-9_]+)"\s+value="([A-Za-z0-9_\-\.]*)"\s*(?:required|)\s*>'
@@ -22,10 +24,11 @@ YT_HIDDEN_INPUT_RE = r'<input\s+type="hidden"\s+name="([A-Za-z0-9_]+)"\s+value="
 
 class YoutubeCommentDownloader:
 
-    def __init__(self):
+    def __init__(self, rabbit):
         self.session = requests.Session()
         self.session.headers['User-Agent'] = USER_AGENT
         self.session.cookies.set('CONSENT', 'YES+cb', domain='.youtube.com')
+        self.rabbit_chan = rabbit
 
     def ajax_request(self, endpoint, ytcfg, retries=5, sleep=20):
         url = 'https://www.youtube.com' + endpoint['commandMetadata']['webCommandMetadata']['apiUrl']
@@ -38,6 +41,11 @@ class YoutubeCommentDownloader:
             if response.status_code == 200:
                 return response.json()
             if response.status_code in [403, 413]:
+                msg = json.dumps('status_code:' + str(response.status_code))
+                self.rabbit_chan.basic_publish(exchange='',
+                                               routing_key=resp_code_queue,
+                                               body=msg)
+
                 return {}
             else:
                 time.sleep(sleep)
@@ -106,7 +114,7 @@ class YoutubeCommentDownloader:
                         continuations.append(next(self.search_dict(item, 'buttonRenderer'))['command'])
 
             toolbar_payloads = self.search_dict(response, 'engagementToolbarStateEntityPayload')
-            toolbar_states = {payloads['key']:payloads for payloads in toolbar_payloads}
+            toolbar_states = {payloads['key']: payloads for payloads in toolbar_payloads}
             for comment in reversed(list(self.search_dict(response, 'commentEntityPayload'))):
                 properties = comment['properties']
                 author = comment['author']

@@ -145,7 +145,7 @@ def get_kafka_connection(cfg: dict):
 
 
 def download_comments(video_id: str, channel_id: str, sort: str, language: str, host: str, rabbit_channel):
-    downloader = YoutubeCommentDownloader()
+    downloader = YoutubeCommentDownloader(rabbit_channel)
     # generator = downloader.get_comments(video_id)
     generator = downloader.get_comments_from_url(YOUTUBE_VIDEO_URL.format(youtube_id=video_id),
                                                  language="en")
@@ -291,6 +291,21 @@ def eprint(*args, **kwargs):
 
 def main(argv=None):
     # cfg = yaml.safe_load(open(config_path))
+
+    # downloader = YoutubeCommentDownloader()
+    # generator = downloader.get_comments_from_url(YOUTUBE_VIDEO_URL.format(youtube_id="91CoPaHTgMg"),
+    #                                              language="en")
+    #
+    # commentsCount = 0
+    #
+    # comment = next(generator, None)
+    # while comment:
+    #     commentsCount +=1
+    #     # comment_str = to_json(comment, indent=INDENT if pretty else None)
+    #     comment = next(generator, None)  # Note that this is the next comment
+    #
+    # print("comments count", commentsCount)
+    # exit(1)
 
     rabbit_connection = get_rabbit_connection()
     rabbit_channel = rabbit_connection.channel()
